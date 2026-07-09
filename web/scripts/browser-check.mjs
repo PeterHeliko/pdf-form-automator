@@ -128,8 +128,18 @@ try {
   await page.locator("#btn-undo").click();
   if ((await page.locator("#field-list .row").count()) !== fieldCount) fail("undo did not restore the field");
 
-  // draw a new field in add-field mode on an empty page area
+  // draw a new field in add-field mode on an empty page area; the mode
+  // toggle must reflect the active mode
   await page.locator("#mode-draw").click();
+  if (!(await page.locator("#mode-draw").getAttribute("class"))?.includes("active")) {
+    fail("Add-field mode button not marked active");
+  }
+  if ((await page.locator("#mode-select").getAttribute("class"))?.includes("active")) {
+    fail("Select mode button still marked active in draw mode");
+  }
+  const activeBg = await page.locator("#mode-draw").evaluate((b) => getComputedStyle(b).backgroundColor);
+  const inactiveBg = await page.locator("#mode-select").evaluate((b) => getComputedStyle(b).backgroundColor);
+  if (activeBg === inactiveBg) fail(`mode toggle not visually distinct (both ${activeBg})`);
   const box = await page.locator("#overlay").boundingBox();
   await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.5);
   await page.mouse.down();
@@ -166,6 +176,18 @@ try {
   if (JSON.stringify(types) !== JSON.stringify(["checkbox", "signature", "text", "text"])) {
     fail(`export field types ${types}`);
   }
+
+  // i18n: a German browser locale defaults the UI to German, and the
+  // toolbar switcher flips it back
+  const dePage = await browser.newPage({ viewport: { width: 1400, height: 900 }, locale: "de-DE" });
+  await dePage.goto(`http://127.0.0.1:${port}/`);
+  await dePage.waitForSelector("#btn-open");
+  const deOpen = (await dePage.textContent("#btn-open")).trim();
+  console.log("de locale toolbar:", deOpen, "-", (await dePage.textContent("#status")).trim());
+  if (deOpen !== "Öffnen…") fail(`German locale did not localize UI (got ${deOpen})`);
+  await dePage.selectOption("#lang", "en");
+  if ((await dePage.textContent("#btn-open")).trim() !== "Open…") fail("language switcher did not switch to English");
+  await dePage.close();
 
   const badErrors = errors.filter((e) => !e.includes("favicon"));
   if (badErrors.length) fail("console errors:\n" + badErrors.join("\n"));

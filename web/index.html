@@ -9,13 +9,13 @@
 <body>
   <div id="app">
     <header id="toolbar">
-      <button id="btn-open" title="Open a PDF (or drop one anywhere)">Open…</button>
+      <button id="btn-open">Open…</button>
       <input id="file-input" type="file" accept="application/pdf,.pdf,.PDF" hidden />
       <div class="seg" role="group" aria-label="Mode">
-        <button id="mode-select" class="active" title="Select and edit fields (Esc)">Select</button>
-        <button id="mode-draw" title="Drag a rectangle where a field is missing">Add field</button>
+        <button id="mode-select" class="active" aria-pressed="true">Select</button>
+        <button id="mode-draw" aria-pressed="false">Add field</button>
       </div>
-      <label class="inline">New type
+      <label class="inline"><span id="t-newtype">New type</span>
         <select id="new-type">
           <option value="auto" selected>auto</option>
           <option value="text">text</option>
@@ -24,17 +24,21 @@
           <option value="signature">signature</option>
         </select>
       </label>
-      <button id="btn-redetect" title="Discard edits and re-run detection">Re-detect</button>
+      <button id="btn-redetect">Re-detect</button>
       <span class="spacer"></span>
-      <button id="page-prev" title="Previous page (PageUp)">◀</button>
+      <button id="page-prev">◀</button>
       <span id="page-label" class="readout">– / –</span>
-      <button id="page-next" title="Next page (PageDown)">▶</button>
+      <button id="page-next">▶</button>
       <span class="gap"></span>
-      <button id="zoom-out" title="Zoom out (Ctrl+-)">−</button>
+      <button id="zoom-out">−</button>
       <span id="zoom-label" class="readout">100%</span>
-      <button id="zoom-in" title="Zoom in (Ctrl++)">+</button>
+      <button id="zoom-in">+</button>
       <span class="gap"></span>
-      <button id="btn-export" class="primary" title="Write the fillable PDF">Export…</button>
+      <select id="lang" aria-label="Language">
+        <option value="en">EN</option>
+        <option value="de">DE</option>
+      </select>
+      <button id="btn-export" class="primary">Export…</button>
     </header>
 
     <aside id="thumbs" aria-label="Pages"></aside>
@@ -46,25 +50,25 @@
       </div>
       <div id="empty-state">
         <p><strong>PDF Form Automator</strong></p>
-        <p>Open a flat PDF form — likely fill-in areas are detected and turned<br>
+        <p id="t-empty-1">Open a flat PDF form — likely fill-in areas are detected and turned
            into real, fillable AcroForm fields (text, checkbox, date, signature).</p>
-        <p>Everything runs locally in your browser; no file leaves this machine.</p>
-        <p><button id="btn-open-2">Open a PDF…</button> or drop one anywhere.</p>
+        <p id="t-empty-2">Everything runs locally in your browser; no file leaves this machine.</p>
+        <p><button id="btn-open-2">Open a PDF…</button> <span id="t-or-drop">or drop one anywhere.</span></p>
         <p class="fineprint">
-          <a href="https://github.com/PeterHeliko/pdf-form-automator" target="_blank" rel="noopener">Source code</a>
-          · built on <a href="https://mupdfjs.readthedocs.io/" target="_blank" rel="noopener">MuPDF.js</a> (AGPL-3.0)
+          <a id="t-src" href="https://github.com/PeterHeliko/pdf-form-automator" target="_blank" rel="noopener">Source code</a>
+          · <span id="t-builton">built on</span> <a href="https://mupdfjs.readthedocs.io/" target="_blank" rel="noopener">MuPDF.js</a> (AGPL-3.0)
         </p>
       </div>
     </main>
 
     <aside id="sidebar">
-      <h3>Fields on this page</h3>
+      <h3 id="t-fields-heading">Fields on this page</h3>
       <div id="field-list" tabindex="0"></div>
       <fieldset id="editor">
         <legend id="editor-legend">Selected field</legend>
-        <label>Name <input id="f-name" type="text" autocomplete="off" /></label>
-        <label>Label <input id="f-label" type="text" autocomplete="off" /></label>
-        <label>Type
+        <label><span id="t-f-name">Name</span> <input id="f-name" type="text" autocomplete="off" /></label>
+        <label><span id="t-f-label">Label</span> <input id="f-label" type="text" autocomplete="off" /></label>
+        <label><span id="t-f-type">Type</span>
           <select id="f-type">
             <option value=""></option>
             <option value="text">text</option>
@@ -73,7 +77,7 @@
             <option value="signature">signature</option>
           </select>
         </label>
-        <label class="check"><input id="f-multiline" type="checkbox" /> Multiline</label>
+        <label class="check"><input id="f-multiline" type="checkbox" /> <span id="t-f-multiline">Multiline</span></label>
         <div class="btnrow">
           <button id="btn-delete">Delete (Del)</button>
           <button id="btn-undo" title="Ctrl+Z">Undo</button>

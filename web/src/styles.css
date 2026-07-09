@@ -73,7 +73,15 @@ html, body {
 .seg button { border-radius: 0; margin-left: -1px; }
 .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
 .seg button:last-child { border-radius: 0 6px 6px 0; }
-.seg button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* the active mode of the Select/Add-field toggle (specificity must beat
+   the #toolbar button base style, hover included) */
+#toolbar .seg button.active,
+#toolbar .seg button.active:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
 
 .inline { display: inline-flex; align-items: center; gap: 5px; }
 .spacer { flex: 1; }

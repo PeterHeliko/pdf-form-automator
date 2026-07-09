@@ -12,6 +12,7 @@ import {
 } from "../types";
 import type { WorkerRequest, WorkerResponse } from "../worker/protocol";
 import { History, snapshot } from "./history";
+import { currentLang, setLang, t, typeName, type Lang } from "./i18n";
 import { PageCanvas } from "./pageCanvas";
 
 const ZOOM_100 = 100 / 72; // pixels per point at "100%" (same as preview.py)
@@ -78,13 +79,60 @@ export class App {
     this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => this.onWorkerMessage(e.data);
     this.worker.onerror = (e) => {
       console.error("PDF worker error:", e.message, e.filename, e.lineno);
-      this.status(`PDF engine error: ${e.message || "failed to load"}`);
+      this.status(t("engineError", { err: e.message || "failed to load" }));
     };
     this.overlay = document.getElementById("overlay") as unknown as SVGSVGElement;
     this.canvas = new PageCanvas(this.overlay, this);
     this.buildUI();
     this.bindKeys();
-    this.status("Open a PDF to begin.");
+    this.applyTranslations();
+    this.status(t("statusStart"));
+  }
+
+  /** Set every static UI text/tooltip for the current language. */
+  private applyTranslations(): void {
+    const set = (id: string, text: string) => { el(id).textContent = text; };
+    const title = (id: string, text: string) => { el(id).title = text; };
+    set("btn-open", t("open"));
+    title("btn-open", t("openTitle"));
+    set("mode-select", t("select"));
+    title("mode-select", t("selectTitle"));
+    set("mode-draw", t("addField"));
+    title("mode-draw", t("addFieldTitle"));
+    set("t-newtype", t("newType"));
+    set("btn-redetect", t("redetect"));
+    title("btn-redetect", t("redetectTitle"));
+    set("btn-export", t("export"));
+    title("btn-export", t("exportTitle"));
+    title("page-prev", t("prevPageTitle"));
+    title("page-next", t("nextPageTitle"));
+    title("zoom-in", t("zoomInTitle"));
+    title("zoom-out", t("zoomOutTitle"));
+    title("lang", t("langTitle"));
+    set("t-empty-1", t("emptyLine1"));
+    set("t-empty-2", t("emptyLine2"));
+    set("btn-open-2", t("emptyOpen"));
+    set("t-or-drop", t("orDrop"));
+    set("t-src", t("srcLink"));
+    set("t-builton", t("builtOn"));
+    set("src-link", t("srcLinkShort"));
+    set("t-fields-heading", t("fieldsOnPage"));
+    set("t-f-name", t("fName"));
+    set("t-f-label", t("fLabel"));
+    set("t-f-type", t("fType"));
+    set("t-f-multiline", t("fMultiline"));
+    set("btn-delete", t("delete"));
+    set("btn-undo", t("undo"));
+    set("btn-redo", t("redo"));
+    set("drop-hint", t("dropHint"));
+    document.documentElement.lang = currentLang();
+    // field-type display names in both type selects
+    for (const selectId of ["new-type", "f-type"]) {
+      for (const opt of (el<HTMLSelectElement>(selectId)).options) {
+        if (opt.value === "auto") opt.textContent = t("typeAuto");
+        else if (opt.value) opt.textContent = typeName(opt.value);
+      }
+    }
   }
 
   // ------------------------------------------------------------- UI setup
@@ -110,6 +158,15 @@ export class App {
     el("btn-delete").addEventListener("click", () => this.deleteSelected());
     el("btn-undo").addEventListener("click", () => this.undo());
     el("btn-redo").addEventListener("click", () => this.redo());
+
+    const langSelect = el<HTMLSelectElement>("lang");
+    langSelect.value = currentLang();
+    langSelect.addEventListener("change", () => {
+      setLang(langSelect.value as Lang);
+      this.applyTranslations();
+      this.refreshSidebar();
+      if (!this.fileName) this.status(t("statusStart"));
+    });
 
     for (const input of [this.dom.fName, this.dom.fLabel]) {
       input.addEventListener("keydown", (e) => {
@@ -229,9 +286,10 @@ export class App {
   private setMode(mode: "select" | "draw"): void {
     this.dom.modeSelect.classList.toggle("active", mode === "select");
     this.dom.modeDraw.classList.toggle("active", mode === "draw");
+    this.dom.modeSelect.setAttribute("aria-pressed", String(mode === "select"));
+    this.dom.modeDraw.setAttribute("aria-pressed", String(mode === "draw"));
     if (mode === "draw") {
-      this.status("Add field: drag a rectangle where a field is missing – "
-        + "it snaps to lines/boxes there, or is placed as drawn.");
+      this.status(t("addFieldHint"));
     }
   }
 
@@ -291,17 +349,17 @@ export class App {
   }
 
   undo(): void {
-    this.applyHistory(this.history.undoStack, this.history.redoStack, "Undo");
+    this.applyHistory(this.history.undoStack, this.history.redoStack, "undo");
   }
 
   redo(): void {
-    this.applyHistory(this.history.redoStack, this.history.undoStack, "Redo");
+    this.applyHistory(this.history.redoStack, this.history.undoStack, "redo");
   }
 
-  private applyHistory(source: typeof this.history.undoStack, target: typeof this.history.redoStack, what: string): void {
+  private applyHistory(source: typeof this.history.undoStack, target: typeof this.history.redoStack, what: "undo" | "redo"): void {
     const snap = source.pop();
     if (!snap) {
-      this.status(`Nothing to ${what.toLowerCase()}.`);
+      this.status(t(what === "undo" ? "nothingToUndo" : "nothingToRedo"));
       return;
     }
     target.push(snapshot(snap.page, this.cands.get(snap.page) ?? [],
@@ -317,7 +375,7 @@ export class App {
     this.refreshSidebar();
     this.canvas.redrawOverlays();
     this.updateThumbBadge(snap.page);
-    this.status(`${what}: one step on page ${snap.page + 1}.`);
+    this.status(t(what === "undo" ? "undoDone" : "redoDone", { p: snap.page + 1 }));
   }
 
   commitRects(changes: Map<number, Rect>): void {
@@ -340,12 +398,12 @@ export class App {
       const ftype = (FTYPES as string[]).includes(override) ? (override as FType) : "text";
       found = [makeCandidate(this.page, this.canvas.clamp(region), ftype, "",
         { multiline: region.height > 30, source: "manual" })];
-      note = "no matching geometry, field placed as drawn";
+      note = t("noteAsDrawn");
     } else {
       if ((FTYPES as string[]).includes(override)) {
         for (const c of found) c.ftype = override as FType;
       }
-      note = "snapped to page geometry";
+      note = t("noteSnapped");
     }
     const candList = this.cands.get(this.page) ?? [];
     this.cands.set(this.page, candList);
@@ -370,7 +428,7 @@ export class App {
     }
     found = surviving;
     if (!found.length) {
-      this.status("A field already covers that area.");
+      this.status(t("alreadyCovered"));
       return;
     }
     this.pushHistory();
@@ -380,7 +438,7 @@ export class App {
     this.setMode("select");
     this.selectSet(found.map((_, i) => firstNew + i));
     this.updateThumbBadge(this.page);
-    this.status(`Added ${found.length} field(s) (${note}).`);
+    this.status(t("addedFields", { n: found.length, note }));
   }
 
   // ------------------------------------------------------------ field edits
@@ -396,7 +454,7 @@ export class App {
     this.refreshSidebar();
     this.canvas.redrawOverlays();
     this.updateThumbBadge(this.page);
-    this.status(`Deleted ${doomed.length} field(s) – Ctrl+Z to undo.`);
+    this.status(t("deletedFields", { n: doomed.length }));
   }
 
   private commitEditor(): void {
@@ -440,10 +498,10 @@ export class App {
       const row = document.createElement("div");
       row.className = `row${selected.has(i) ? " selected" : ""}`;
       const name = document.createElement("span");
-      name.textContent = c.name || c.label || "(unnamed)";
+      name.textContent = c.name || c.label || t("unnamed");
       const ftype = document.createElement("span");
       ftype.className = "ftype";
-      ftype.textContent = c.ftype;
+      ftype.textContent = typeName(c.ftype);
       row.append(name, ftype);
       row.addEventListener("click", (e) => this.onListClick(i, e));
       list.append(row);
@@ -491,7 +549,7 @@ export class App {
         this.editorLoaded = ["", "", "", false];
       }
       this.dom.editorLegend.textContent =
-        sel.length > 1 ? `Selected fields (${sel.length})` : "Selected field";
+        sel.length > 1 ? t("selectedFields", { n: sel.length }) : t("selectedField");
     } finally {
       this.syncing = saved;
     }
@@ -509,11 +567,11 @@ export class App {
     try {
       buffer = await file.arrayBuffer();
     } catch (e) {
-      this.status(`Cannot read ${file.name}: ${e}`);
+      this.status(t("cannotOpen", { name: file.name, err: String(e) }));
       return;
     }
     this.fileName = file.name;
-    this.status(`Opening ${file.name} …`);
+    this.status(t("opening", { name: file.name }));
     const id = ++this.openId;
     this.post({ type: "open", id, buffer }, [buffer]);
   }
@@ -540,8 +598,7 @@ export class App {
 
   redetect(): void {
     if (!this.fileName) return;
-    if (this.dirtyPages.size &&
-        !window.confirm("This discards your edits and re-runs detection. Continue?")) {
+    if (this.dirtyPages.size && !window.confirm(t("confirmRedetect"))) {
       return;
     }
     this.selection = [];
@@ -575,12 +632,14 @@ export class App {
         break;
       case "open-error":
         if (msg.id === this.openId) {
-          this.status(`Cannot open ${this.fileName}: ${msg.message}`);
+          this.status(t("cannotOpen", { name: this.fileName ?? "?", err: msg.message }));
           this.fileName = null;
         }
         break;
       case "status":
-        if (msg.runId === this.runId) this.status(msg.text);
+        if (msg.runId === this.runId) {
+          this.status(t("detectingPage", { p: msg.page, n: msg.total }));
+        }
         break;
       case "page": {
         if (msg.runId !== this.runId) break; // stale run
@@ -602,13 +661,13 @@ export class App {
         this.detecting = false;
         let total = 0;
         for (const list of this.cands.values()) total += list.length;
-        this.status(`Detection finished: ${total} field(s). Review/edit them, then Export.`);
+        this.status(t("detectionFinished", { n: total }));
         break;
       }
       case "detect-error":
         if (msg.runId === this.runId) {
           this.detecting = false;
-          this.status("Detection failed: " + msg.message);
+          this.status(t("detectionFailed", { err: msg.message }));
         }
         break;
       case "rendered":
@@ -621,7 +680,7 @@ export class App {
         if (msg.id === this.lastExportId) this.downloadExport(msg.bytes);
         break;
       case "export-error":
-        if (msg.id === this.lastExportId) this.status(`Export failed: ${msg.message}`);
+        if (msg.id === this.lastExportId) this.status(t("exportFailed", { err: msg.message }));
         break;
     }
   }
@@ -750,8 +809,7 @@ export class App {
 
   export(): void {
     if (!this.fileName) return;
-    if (this.detecting &&
-        !window.confirm("Detection is still running. Export with the fields found so far?")) {
+    if (this.detecting && !window.confirm(t("confirmExportRunning"))) {
       return;
     }
     const allCands: Candidate[] = [];
@@ -762,7 +820,7 @@ export class App {
       allCands.push(...sorted);
     }
     if (!allCands.length) {
-      this.status("There are no form fields to write.");
+      this.status(t("nothingToExport"));
       return;
     }
     for (const c of allCands) {
@@ -771,7 +829,7 @@ export class App {
     assignNames(allCands);
     this.refreshSidebar(); // names may have been assigned/uniquified
     this.canvas.redrawOverlays();
-    this.status("Exporting …");
+    this.status(t("exporting"));
     const id = ++this.msgId;
     this.lastExportId = id;
     this.post({ type: "export", id, candidates: allCands.map(candidateToJSON) });
@@ -796,8 +854,8 @@ export class App {
       }
     }
     const summary = Array.from(counts).sort(([a], [b]) => a.localeCompare(b))
-      .map(([t, n]) => `${n} ${t}`).join(", ");
-    this.status(`Exported ${name}  (${summary || total})`);
+      .map(([ft, n]) => `${n} ${typeName(ft)}`).join(", ");
+    this.status(t("exported", { name, summary: summary || String(total) }));
   }
 
   status(text: string): void {

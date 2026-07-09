@@ -5,7 +5,8 @@
 import { describe, expect, it } from "vitest";
 
 import { Rect, pyRound } from "../src/geometry";
-import { trimRect } from "../src/heuristics";
+import { FIELD_GAP, dedupe, trimRect } from "../src/heuristics";
+import { makeCandidate } from "../src/types";
 
 describe("Rect (fitz semantics)", () => {
   it("width/height clamp to 0 for inverted rects", () => {
@@ -65,15 +66,46 @@ describe("pyRound (banker's rounding)", () => {
 });
 
 describe("trimRect", () => {
-  it("keeps the largest usable side band", () => {
+  it("keeps the largest usable side band, leaving the field gap", () => {
     const r = new Rect(0, 0, 100, 50);
     const k = new Rect(80, -10, 120, 60); // covers the right edge
-    expect(trimRect(r, k)!.toTuple()).toEqual([0, 0, 80, 50]);
+    expect(trimRect(r, k)!.toTuple()).toEqual([0, 0, 80 - FIELD_GAP, 50]);
   });
 
   it("returns null when every option is too small", () => {
     const r = new Rect(0, 0, 20, 10);
     const k = new Rect(2, 2, 18, 8); // centered, leaves only slivers
     expect(trimRect(r, k)).toBeNull();
+  });
+});
+
+describe("dedupe field gap", () => {
+  it("separates fields that touch without overlapping", () => {
+    const a = makeCandidate(0, new Rect(0, 0, 50, 20), "text", "a");
+    const b = makeCandidate(0, new Rect(0, 20, 50, 40), "text", "b"); // touches a
+    const out = dedupe([a, b]);
+    expect(out).toHaveLength(2);
+    expect(out[1].rect.y0 - out[0].rect.y1).toBeGreaterThanOrEqual(FIELD_GAP);
+  });
+
+  it("leaves a field alone when shrinking would make it unusably small", () => {
+    const a = makeCandidate(0, new Rect(0, 0, 50, 20), "text", "a");
+    const b = makeCandidate(0, new Rect(0, 20, 50, 26), "text", "b"); // 6pt tall
+    const out = dedupe([a, b]);
+    expect(out[1].rect.toTuple()).toEqual([0, 20, 50, 26]);
+  });
+
+  it("trims overlapping fields down to the gap", () => {
+    const a = makeCandidate(0, new Rect(0, 0, 50, 20), "text", "a");
+    const b = makeCandidate(0, new Rect(0, 15, 50, 40), "text", "b"); // 5pt overlap
+    const out = dedupe([a, b]);
+    expect(out[1].rect.y0).toBeCloseTo(20 + FIELD_GAP);
+  });
+
+  it("separates horizontal neighbors", () => {
+    const a = makeCandidate(0, new Rect(0, 0, 50, 20), "text", "a");
+    const b = makeCandidate(0, new Rect(50, 0, 100, 20), "text", "b");
+    const out = dedupe([a, b]);
+    expect(out[1].rect.x0 - out[0].rect.x1).toBeGreaterThanOrEqual(FIELD_GAP);
   });
 });

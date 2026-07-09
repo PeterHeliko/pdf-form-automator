@@ -13,7 +13,7 @@ export type WorkerResponse =
   | { type: "ready" }
   | { type: "opened"; id: number; pageCount: number; sizes: [number, number][] }
   | { type: "open-error"; id: number; message: string }
-  | { type: "status"; runId: number; text: string }
+  | { type: "status"; runId: number; page: number; total: number }
   | { type: "page"; runId: number; page: number; data: PageDataJSON; candidates: CandidateJSON[] }
   | { type: "detect-done"; runId: number }
   | { type: "detect-error"; runId: number; message: string }

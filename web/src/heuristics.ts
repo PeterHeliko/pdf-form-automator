@@ -10,6 +10,10 @@ import { lineText, makeCandidate } from "./types";
 export const SIGNATURE_RE = /unterschrift|unterzeichn|signatur|signature|visum/i;
 export const DATE_RE = /\bdatum\b|geburtsdatum|\bdate\b/i;
 
+/** Minimum breathing room between two fields: touching rects read as one
+ * blob. Kept tiny so no usable space is wasted. */
+export const FIELD_GAP = 1.5;
+
 const MIN_INLINE_GAP = 40.0; // min width for a field right of a label on the same line
 const MIN_UNDERLINE_GAP = 30.0;
 const MIN_VGAP = 12.0; // min height of an empty area below a label inside a box
@@ -319,13 +323,15 @@ function underlineCandidates(data: PageData): Candidate[] {
   return out;
 }
 
-/** Largest edge-trimmed sub-rect of r that no longer intersects k. */
+/** Largest edge-trimmed sub-rect of r that no longer intersects k (and
+ * keeps FIELD_GAP distance to it). */
 export function trimRect(r: Rect, k: Rect): Rect | null {
+  const g = FIELD_GAP;
   const options: Rect[] = [];
-  if (k.y1 < r.y1) options.push(new Rect(r.x0, k.y1, r.x1, r.y1)); // keep lower part
-  if (k.y0 > r.y0) options.push(new Rect(r.x0, r.y0, r.x1, k.y0)); // keep upper part
-  if (k.x1 < r.x1) options.push(new Rect(k.x1, r.y0, r.x1, r.y1)); // keep right part
-  if (k.x0 > r.x0) options.push(new Rect(r.x0, r.y0, k.x0, r.y1)); // keep left part
+  if (k.y1 + g < r.y1) options.push(new Rect(r.x0, k.y1 + g, r.x1, r.y1)); // keep lower part
+  if (k.y0 - g > r.y0) options.push(new Rect(r.x0, r.y0, r.x1, k.y0 - g)); // keep upper part
+  if (k.x1 + g < r.x1) options.push(new Rect(k.x1 + g, r.y0, r.x1, r.y1)); // keep right part
+  if (k.x0 - g > r.x0) options.push(new Rect(r.x0, r.y0, k.x0 - g, r.y1)); // keep left part
   const usable = options.filter((o) => o.width >= 8 && o.height >= 6);
   if (!usable.length) return null;
   let bestRect = usable[0];
@@ -336,7 +342,7 @@ export function trimRect(r: Rect, k: Rect): Rect | null {
 }
 
 /** Enforce that detection never emits overlapping fields. */
-function dedupe(candidates: Candidate[]): Candidate[] {
+export function dedupe(candidates: Candidate[]): Candidate[] {
   const kept: Candidate[] = [];
   for (const cand of candidates) {
     let rect = cand.rect.clone();
@@ -361,7 +367,37 @@ function dedupe(candidates: Candidate[]): Candidate[] {
     }
   }
   kept.sort((a, b) => a.rect.y0 - b.rect.y0 || a.rect.x0 - b.rect.x0);
+  separateTouching(kept);
   return kept;
+}
+
+/** Fields from independent detectors may touch without overlapping; shrink
+ * the later one (in reading order) just enough to leave FIELD_GAP between
+ * them. Skipped when the field would fall below a usable size. */
+function separateTouching(kept: Candidate[]): void {
+  for (let j = 1; j < kept.length; j++) {
+    const b = kept[j].rect;
+    for (let i = 0; i < j; i++) {
+      const a = kept[i].rect;
+      const xOverlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 0;
+      const yOverlap = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 0;
+      if (xOverlap && !yOverlap) {
+        // vertical neighbors
+        if (b.y0 >= a.y1 && b.y0 - a.y1 < FIELD_GAP && b.y1 - (a.y1 + FIELD_GAP) >= 6) {
+          b.y0 = a.y1 + FIELD_GAP;
+        } else if (a.y0 >= b.y1 && a.y0 - b.y1 < FIELD_GAP && (a.y0 - FIELD_GAP) - b.y0 >= 6) {
+          b.y1 = a.y0 - FIELD_GAP;
+        }
+      } else if (yOverlap && !xOverlap) {
+        // horizontal neighbors
+        if (b.x0 >= a.x1 && b.x0 - a.x1 < FIELD_GAP && b.x1 - (a.x1 + FIELD_GAP) >= 8) {
+          b.x0 = a.x1 + FIELD_GAP;
+        } else if (a.x0 >= b.x1 && a.x0 - b.x1 < FIELD_GAP && (a.x0 - FIELD_GAP) - b.x0 >= 8) {
+          b.x1 = a.x0 - FIELD_GAP;
+        }
+      }
+    }
+  }
 }
 
 /** Free-standing 'Label:' lines with empty space to the right. */

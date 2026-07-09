@@ -59,7 +59,7 @@ async function runDetect(runId: number): Promise<void> {
   try {
     const pageCount = doc.countPages();
     for (let pno = 0; pno < pageCount; pno++) {
-      post({ type: "status", runId, text: `Detecting fields – page ${pno + 1}/${pageCount} …` });
+      post({ type: "status", runId, page: pno + 1, total: pageCount });
       // yield to the event loop so a superseding open/detect can interleave
       await new Promise((r) => setTimeout(r, 0));
       if (currentRun !== runId || !doc) return;
