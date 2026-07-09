@@ -243,9 +243,11 @@ select, input[type="text"] {
 #editor { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 0; min-width: 0; }
 #editor input[type="text"], #editor select { width: 100%; min-width: 0; }
 #editor legend { padding: 0 4px; font-weight: 600; }
-#editor label { display: grid; grid-template-columns: 44px 1fr; align-items: center; gap: 6px; margin: 5px 0; }
+/* label column must fit the longest translation ("Beschriftung") */
+#editor label { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 6px; margin: 5px 0; }
 #editor label.check { display: flex; }
-#editor .btnrow { display: flex; gap: 6px; margin-top: 8px; }
+#editor .btnrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#editor .btnrow button { flex: 1; padding: 4px 6px; white-space: nowrap; min-width: 0; }
 
 /* -------------------------------------------------------------- status */
 

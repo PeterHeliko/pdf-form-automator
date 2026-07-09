@@ -122,6 +122,7 @@ export class App {
     set("t-f-type", t("fType"));
     set("t-f-multiline", t("fMultiline"));
     set("btn-delete", t("delete"));
+    title("btn-delete", t("deleteTitle"));
     set("btn-undo", t("undo"));
     set("btn-redo", t("redo"));
     set("drop-hint", t("dropHint"));
