@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Form Automator</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <button id="btn-open" title="Open a PDF (or drop one anywhere)">Open…</button>
+      <input id="file-input" type="file" accept="application/pdf,.pdf,.PDF" hidden />
+      <div class="seg" role="group" aria-label="Mode">
+        <button id="mode-select" class="active" title="Select and edit fields (Esc)">Select</button>
+        <button id="mode-draw" title="Drag a rectangle where a field is missing">Add field</button>
+      </div>
+      <label class="inline">New type
+        <select id="new-type">
+          <option value="auto" selected>auto</option>
+          <option value="text">text</option>
+          <option value="checkbox">checkbox</option>
+          <option value="date">date</option>
+          <option value="signature">signature</option>
+        </select>
+      </label>
+      <button id="btn-redetect" title="Discard edits and re-run detection">Re-detect</button>
+      <span class="spacer"></span>
+      <button id="page-prev" title="Previous page (PageUp)">◀</button>
+      <span id="page-label" class="readout">– / –</span>
+      <button id="page-next" title="Next page (PageDown)">▶</button>
+      <span class="gap"></span>
+      <button id="zoom-out" title="Zoom out (Ctrl+-)">−</button>
+      <span id="zoom-label" class="readout">100%</span>
+      <button id="zoom-in" title="Zoom in (Ctrl++)">+</button>
+      <span class="gap"></span>
+      <button id="btn-export" class="primary" title="Write the fillable PDF">Export…</button>
+    </header>
+
+    <aside id="thumbs" aria-label="Pages"></aside>
+
+    <main id="viewport">
+      <div id="page-wrap" hidden>
+        <canvas id="page-bitmap"></canvas>
+        <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div id="empty-state">
+        <p><strong>PDF Form Automator</strong></p>
+        <p>Open a flat PDF form — likely fill-in areas are detected and turned<br>
+           into real, fillable AcroForm fields (text, checkbox, date, signature).</p>
+        <p>Everything runs locally in your browser; no file leaves this machine.</p>
+        <p><button id="btn-open-2">Open a PDF…</button> or drop one anywhere.</p>
+        <p class="fineprint">
+          <a href="https://github.com/PeterHeliko/pdf-form-automator" target="_blank" rel="noopener">Source code</a>
+          · built on <a href="https://mupdfjs.readthedocs.io/" target="_blank" rel="noopener">MuPDF.js</a> (AGPL-3.0)
+        </p>
+      </div>
+    </main>
+
+    <aside id="sidebar">
+      <h3>Fields on this page</h3>
+      <div id="field-list" tabindex="0"></div>
+      <fieldset id="editor">
+        <legend id="editor-legend">Selected field</legend>
+        <label>Name <input id="f-name" type="text" autocomplete="off" /></label>
+        <label>Label <input id="f-label" type="text" autocomplete="off" /></label>
+        <label>Type
+          <select id="f-type">
+            <option value=""></option>
+            <option value="text">text</option>
+            <option value="checkbox">checkbox</option>
+            <option value="date">date</option>
+            <option value="signature">signature</option>
+          </select>
+        </label>
+        <label class="check"><input id="f-multiline" type="checkbox" /> Multiline</label>
+        <div class="btnrow">
+          <button id="btn-delete">Delete (Del)</button>
+          <button id="btn-undo" title="Ctrl+Z">Undo</button>
+          <button id="btn-redo" title="Ctrl+Y">Redo</button>
+        </div>
+      </fieldset>
+    </aside>
+
+    <footer id="status-bar">
+      <span id="status">Open a PDF to begin.</span>
+      <a id="src-link" href="https://github.com/PeterHeliko/pdf-form-automator" target="_blank"
+         rel="noopener" title="AGPL-3.0 — complete corresponding source">Source</a>
+    </footer>
+  </div>
+  <div id="drop-hint" hidden>Drop the PDF to open it</div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
