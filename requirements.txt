@@ -1,3 +1,0 @@
-pymupdf>=1.28
-pikepdf>=10
-Pillow>=10

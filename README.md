@@ -1,103 +1,107 @@
 # pdf-form-automator
 
-Turns flat (non-interactive) PDFs into fillable PDFs, fully locally: it detects
-where form fields belong and writes real AcroForm fields into a copy of the
-document — text fields, checkboxes, date fields and real digital **signature
-fields** (`/Sig`, e.g. next to "Unterschrift:").
+Turns flat (non-interactive) PDF forms into fillable PDFs, **entirely in the
+browser**: open a PDF, likely fill-in areas are detected automatically,
+review/edit them on the page, then export a copy with real AcroForm fields —
+text fields, checkboxes, date fields and real digital **signature fields**
+(`/Sig`, e.g. next to "Unterschrift:").
 
-> **Browser version:** [`web/`](web/) contains a TypeScript port that runs
-> entirely in the browser (no server, no AI) with the same detection
-> heuristics, editor and export — see [web/README.md](web/README.md).
-> Pushed to `main`, it auto-deploys to GitHub Pages.
-
-## How it works
-
-1. **Geometric heuristics** (always on, instant): text and vector graphics are
-   extracted with PyMuPDF and normalized. Detected patterns:
-   - `Label: ______` fill-in lines (split at labels sitting on the same line)
-   - labeled boxes with empty space (right of the label or below it)
-   - tables — empty cells become fields named `<column>_<row>`; fully filled
-     rows (e.g. example rows) are skipped
-   - small empty squares → checkboxes, labeled by the text next to them
-   - keywords classify fields: *Unterschrift/Signature* → signature,
-     *Datum/Date* → date
-2. **Local AI verification** (default, needs [Ollama](https://ollama.com)): the
-   page is rendered with numbered candidate boxes and a local vision model
-   (default `qwen2.5vl`) confirms/rejects candidates, improves field names and
-   reports missed fill-in areas. Model suggestions for *new* fields are only
-   accepted when they snap to real page geometry, and the model may only
-   reject weakly-evidenced candidates — checkboxes, labeled fields and table
-   cells are trusted from geometry. If Ollama is not running, the tool falls
-   back to heuristics with a warning.
-3. **Writing**: existing form fields are stripped (leftovers from earlier
-   attempts are common), widgets are added with PyMuPDF, and signature fields
-   are injected with pikepdf as `/FT /Sig` widget annotations.
-
+No backend, no upload: rendering, detection, editing and writing the PDF all
+run locally via [MuPDF.js](https://mupdfjs.readthedocs.io/) (WebAssembly).
 Nothing ever leaves the machine.
 
-## Setup
+## How detection works
+
+Text and vector graphics are extracted per page and normalized, then a set of
+geometric heuristics places field candidates:
+
+- `Label: ______` fill-in lines (split at labels sitting on the same line)
+- labeled boxes with empty space (right of the label or below it)
+- tables — empty cells become fields named `<column>_<row>`; fully filled
+  rows (e.g. example rows) are skipped
+- small empty squares → checkboxes, labeled by the text next to them
+- keywords classify fields: *Unterschrift/Signature* → signature,
+  *Datum/Date* → date
+
+Overlapping candidates are trimmed or dropped, names are uniquified on
+export, and any form fields already present in the input are stripped.
+
+## Using the editor
+
+Detected fields appear as colored overlays (blue = text, orange = date,
+green = checkbox, red = signature):
+
+- click to select; `Ctrl`/`Shift` extends; drag over empty space for a
+  rubber-band selection; `Ctrl+A` selects all fields on the page
+- drag fields to move, drag the white handles to resize, arrow keys nudge
+  (`Shift` = 5 pt); the whole selection moves/resizes together
+- **Add field** mode: drag a rectangle where detection missed something — it
+  snaps to fill-in lines, boxes or checkbox squares found there (with relaxed
+  thresholds), otherwise the field is placed exactly as drawn; *New type*
+  forces a type instead of the auto-classification
+- the sidebar edits name/label (primary field) and type/multiline (whole
+  selection); `Del` deletes; `Ctrl+Z` / `Ctrl+Y` undo/redo (200 steps,
+  works across pages)
+- `PgUp`/`PgDn` turn pages, `Ctrl` + wheel or `Ctrl+±` zooms
+- pages you edited are never overwritten by detection results that arrive
+  later; *Re-detect* re-runs detection from scratch
+- **Export…** downloads `<name>.fillable.pdf`; the input file is never
+  modified
+
+Notes: date fields are ordinary text fields (colored/named as dates, no
+JavaScript validation). Signature fields are empty digital-signature fields —
+Acrobat Reader and other capable viewers offer certificate-based or drawn
+signing on them.
+
+## Development
 
 ```sh
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt
+cd web
+npm install
+npm run dev        # dev server
+npm run build      # typecheck + static site in dist/
+npm test           # unit tests
+npm run smoke      # headless-browser end-to-end test
+                   # (once: npx playwright install chromium)
 ```
 
-## Usage
+The smoke test generates a synthetic test form on the fly, runs the full
+open → detect → edit → export flow in Chromium and verifies the exported
+PDF's fields.
 
-```sh
-.venv/bin/python -m pdf_form_automator "Formular.pdf"
-# -> Formular.fillable.pdf + Formular.fillable.fields.p1.png (preview overlay)
+Code layout (`web/src/`):
+
+```
+geometry.ts    rectangle math the heuristics depend on
+extract.ts     text spans + normalized line geometry per page
+tables.ts      table finder (ruling-line based)
+heuristics.ts  the field detectors + overlap dedupe
+fields.ts      unique field naming
+writer.ts      AcroForm widgets as raw PDF objects, incl. /Sig
+worker/        web worker that owns the wasm engine and open document
+ui/            toolbar / page canvas / sidebar app
 ```
 
-Multiple PDFs can be given at once. Options:
+mupdf objects never leave the worker; page data and candidates travel as
+JSON. The "Add field" snap runs synchronously on the main thread against the
+cached page geometry.
 
-| Option | Effect |
-| --- | --- |
-| `-o OUTPUT` | output path (single input only) |
-| `--no-ai` | skip the Ollama pass, heuristics only (instant) |
-| `--model NAME` | Ollama vision model (default `qwen2.5vl`) |
-| `--keep-existing` | don't strip fields already present in the PDF |
-| `--no-preview` | don't write the preview overlay PNGs |
-| `--debug` | print detected geometry and all candidates |
+## Deploying to GitHub Pages
 
-The preview PNG shows every placed field: blue = text, orange = date,
-green = checkbox, red = signature. If a field landed wrong, re-run with
-`--no-ai` (or a different `--model`) and compare.
+`.github/workflows/pages.yml` builds `web/` and deploys `dist/` to GitHub
+Pages on every push to `main`. One-time setup: repo **Settings → Pages →
+Source: GitHub Actions**. The app then appears at
+`https://peterheliko.github.io/pdf-form-automator/`.
 
-## GUI
+The build uses relative asset paths, so it also works from any static file
+host or subpath without configuration.
 
-```sh
-.venv/bin/python -m pdf_form_automator.gui ["Formular.pdf"]
-```
+## License
 
-A Tkinter editor (no extra dependencies, needs the system Tk that ships with
-Python). Workflow:
+Built on MuPDF.js, which is **AGPL-3.0** — hosting this app publicly counts
+as network distribution, so the page must offer its complete corresponding
+source. The app links to this repository from its footer for that reason.
 
-1. **Open…** a PDF — detection runs in the background (AI pass included when
-   Ollama is reachable and *AI check* is ticked); pages become editable as
-   soon as their heuristics finish.
-2. Click a field to select it; drag to move, drag the white handles to
-   resize, arrow keys nudge (Shift = 5 pt). `Ctrl`/`Shift`+click or dragging
-   a rectangle over empty space selects multiple fields (`Ctrl+A` = all on
-   the page); the whole selection moves/resizes together, and a type change
-   in the sidebar applies to every selected field. The sidebar edits name,
-   label, type and multiline. `Del` deletes the selection. Every edit is
-   undoable: `Ctrl+Z` undo, `Ctrl+Shift+Z`/`Ctrl+Y` redo.
-3. **Add field**: drag a rectangle where detection missed something — it
-   snaps to fill-in lines, boxes or checkbox squares found there (with
-   relaxed thresholds), otherwise the field is placed exactly as drawn.
-   *New type* forces a type instead of the auto-classification.
-4. **Export…** writes the fillable PDF (same pipeline as the CLI: names
-   uniquified, existing fields stripped, signature fields via pikepdf).
-
-Field colors match the CLI previews. `PgUp/PgDn` turn pages, `Ctrl` + mouse
-wheel or `Ctrl+±` zooms. Pages you edited are never overwritten by detection
-results that arrive later; *Re-detect* re-runs detection from scratch.
-
-## Notes
-
-- The input file is never modified; output defaults to `<name>.fillable.pdf`.
-- Date fields are ordinary text fields (colored/named as dates); no JavaScript
-  format validation is added.
-- Signature fields are empty digital-signature fields — Acrobat Reader and
-  other capable viewers offer certificate-based or drawn signing on them.
+This project began as a Python desktop tool (PyMuPDF + Tkinter, optional
+local-AI verification); the browser port was verified field-for-field
+against it before the Python side was retired.

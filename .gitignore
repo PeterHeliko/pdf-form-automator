@@ -1,15 +1,9 @@
-# environments / builds
-.venv/
-__pycache__/
-*.pyc
+# builds / environments
 node_modules/
 web/dist/
 .claude/
 
-# sample forms and everything derived from them stay local:
-# they contain real names / personal data
+# local test documents (may contain personal data)
 *.pdf
 *.PDF
 *.png
-web/test/expected/
-web/test/expected-fillable/

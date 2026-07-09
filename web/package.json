@@ -8,8 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "smoke": "node scripts/browser-check.mjs",
-    "fixtures": "cd .. && .venv/bin/python web/scripts/dump.py"
+    "smoke": "node scripts/browser-check.mjs"
   },
   "dependencies": {
     "mupdf": "^1.26.4"
