@@ -52,9 +52,10 @@ function quadBounds(q: number[]): Rect {
   return new Rect(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
 }
 
-function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: PageChar[] } {
+function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: PageChar[]; images: Rect[] } {
   const rawLines: RawSpan[][] = [];
   const pageChars: PageChar[] = [];
+  const images: Rect[] = [];
   let curLine: RawSpan[] | null = null;
   let curSpan: RawSpan | null = null;
 
@@ -70,9 +71,12 @@ function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: 
     return adv;
   };
 
-  const st = list.toStructuredText("preserve-ligatures,preserve-whitespace,clip");
+  const st = list.toStructuredText("preserve-ligatures,preserve-whitespace,preserve-images,clip");
   try {
     st.walk({
+      onImageBlock(bbox) {
+        images.push(Rect.from(bbox));
+      },
       beginLine() {
         curLine = [];
         rawLines.push(curLine);
@@ -115,7 +119,7 @@ function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: 
   } finally {
     st.destroy();
   }
-  return { rawLines, pageChars };
+  return { rawLines, pageChars, images };
 }
 
 /** Port of _tight_bbox: clamp the vertical extent around the baseline. */
@@ -478,9 +482,10 @@ export function extractPage(page: mupdf.PDFPage, pageNumber: number): PageData {
   let drawings: RawDrawing[];
   let rawLines: RawSpan[][];
   let pageChars: PageChar[];
+  let images: Rect[];
   try {
     drawings = collectDrawings(list);
-    ({ rawLines, pageChars } = walkText(list));
+    ({ rawLines, pageChars, images } = walkText(list));
   } finally {
     list.destroy();
   }
@@ -499,5 +504,14 @@ export function extractPage(page: mupdf.PDFPage, pageNumber: number): PageData {
     tables: findTables(drawings, pageChars, width, height),
   };
   data.boxes = findBoxes(hsegs, vsegs);
+  // small near-square images are checkboxes in disguise (Word inserts empty
+  // checkbox squares as inline images); expose them as boxes so the checkbox
+  // detector and the add-field snap treat them like drawn squares
+  for (const r of images) {
+    if (r.width >= 5 && r.width <= 22 && r.height >= 5 && r.height <= 22 &&
+        Math.abs(r.width - r.height) <= 4) {
+      data.boxes.push({ rect: r });
+    }
+  }
   return data;
 }

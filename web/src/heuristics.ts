@@ -107,10 +107,54 @@ function tableHeaders(table: Table, allTables: Table[]): { headers: Map<number, 
   return { headers: new Map(), ownHeader: false };
 }
 
+/** A short, label-like text (not prose). */
+function captionLike(label: string): boolean {
+  return label.length > 0 && label.length <= 40 && words(label).length <= 5;
+}
+
+/** Field in the empty lower part of a rect whose caption sits at the top
+ * ("Name" printed inside the cell/box, writing space below). */
+function captionField(
+  data: PageData, rect: Rect, label: string, textBottom: number, source: string,
+): Candidate | null {
+  const top = textBottom + 2;
+  const bottom = rect.y1 - 3;
+  if (bottom - top < MIN_VGAP) return null;
+  const field = new Rect(rect.x0 + 4, top, rect.x1 - 4, bottom);
+  if (field.isEmpty || field.width < 10) return null;
+  return makeCandidate(data.number, field, classify(label), label,
+    { multiline: field.height > 30, source });
+}
+
 function tableCandidates(data: PageData): Candidate[] {
   const out: Candidate[] = [];
   for (const table of data.tables) {
     const grid = table.rows;
+    // caption cells: a short label printed at the top of the cell with
+    // enough writing space below it (single-row "tables" included — the
+    // classic "Ort, Datum | Unterschrift" block)
+    for (const row of grid) {
+      for (const cell of row) {
+        if (!cell.text) continue;
+        const label = cell.text.replaceAll("\n", " ").trim();
+        if (!captionLike(label)) continue;
+        // span-level, not line-level: captions of neighboring cells share a
+        // baseline and are merged into one TextLine spanning several cells
+        const spans: Span[] = [];
+        for (const line of data.lines) {
+          for (const s of line.spans) {
+            if (s.bbox.intersects(cell.rect) &&
+                s.bbox.clone().intersect(cell.rect).area() > 0.5 * s.bbox.area()) {
+              spans.push(s);
+            }
+          }
+        }
+        if (!spans.length) continue;
+        const textBottom = Math.max(...spans.map((s) => s.bbox.y1));
+        const cand = captionField(data, cell.rect, label, textBottom, "table");
+        if (cand) out.push(cand);
+      }
+    }
     if (grid.length < 2) continue;
     const { headers, ownHeader } = tableHeaders(table, data.tables);
     for (const row of ownHeader ? grid.slice(1) : grid) {
@@ -195,8 +239,14 @@ function boxCandidates(data: PageData): Candidate[] {
       const sortedSpans = line.spans.slice().sort((a, b) => a.bbox.x0 - b.bbox.x0);
       const lineEndsWithLabel = labels.length > 0 &&
         sortedSpans[sortedSpans.length - 1].text.trimEnd().endsWith(":");
-      if (lineEndsWithLabel && vgap >= MIN_VGAP) {
-        const label = runLabel(sortedSpans, sortedSpans.length - 1);
+      // a colon-less caption counts too when it is the box's only text and
+      // short enough to be a label rather than content ("Name" printed
+      // inside the box, writing space below)
+      const soleCaption = lines.length === 1 && captionLike(lineText(line).trim());
+      if ((lineEndsWithLabel || soleCaption) && vgap >= MIN_VGAP) {
+        const label = lineEndsWithLabel
+          ? runLabel(sortedSpans, sortedSpans.length - 1)
+          : lineText(line).trim();
         const rect = new Rect(r.x0 + 4, belowTop, r.x1 - 4, belowBottom);
         out.push(makeCandidate(data.number, rect, classify(label), label,
           { multiline: rect.height > 30, source: "box" }));

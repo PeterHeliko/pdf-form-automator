@@ -26,6 +26,11 @@ const OUT_DIR = process.env.SHOT_DIR ?? os.tmpdir();
 function makeTestPdf() {
   const doc = new mupdf.PDFDocument();
   const font = doc.addSimpleFont(new mupdf.Font("Helvetica"));
+  // a small white image: Word-style checkbox inserted as an inline image
+  const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 8, 8], false);
+  pix.clear(255);
+  const image = doc.addImage(new mupdf.Image(pix));
+  pix.destroy();
   const contents = `
     0 G 1 w
     BT /F0 12 Tf 72 720 Td (Name:) Tj ET
@@ -36,8 +41,12 @@ function makeTestPdf() {
     145 636 m 350 636 l S
     72 590 10 10 re S
     BT /F0 12 Tf 90 592 Td (Einverstanden) Tj ET
+    q 12 0 0 12 72 520 cm /Im0 Do Q
+    BT /F0 12 Tf 92 523 Td (Zutreffend) Tj ET
+    72 380 250 60 re S
+    BT /F0 11 Tf 78 425 Td (Bemerkungen) Tj ET
   `;
-  const page = doc.addPage([0, 0, 595, 842], 0, { Font: { F0: font } }, contents);
+  const page = doc.addPage([0, 0, 595, 842], 0, { Font: { F0: font }, XObject: { Im0: image } }, contents);
   doc.insertPage(-1, page);
   const bytes = doc.saveToBuffer("").asUint8Array().slice();
   doc.destroy();
@@ -45,8 +54,9 @@ function makeTestPdf() {
 }
 
 // expected detection on the synthetic form: Name (text), Datum (date),
-// Unterschrift (signature), Einverstanden (checkbox)
-const EXPECTED_FIELDS = 4;
+// Unterschrift (signature), Einverstanden (drawn-square checkbox),
+// Zutreffend (image checkbox), Bemerkungen (caption box -> field below)
+const EXPECTED_FIELDS = 6;
 
 // ------------------------------------------------------------------ server
 
@@ -173,7 +183,7 @@ try {
     JSON.stringify(widgets.map((w) => [w.getName(), w.getFieldType()])));
   if (widgets.length !== EXPECTED_FIELDS) fail(`export has ${widgets.length} widgets, expected ${EXPECTED_FIELDS}`);
   // date fields are written as ordinary text widgets (like the original tool)
-  if (JSON.stringify(types) !== JSON.stringify(["checkbox", "signature", "text", "text"])) {
+  if (JSON.stringify(types) !== JSON.stringify(["checkbox", "checkbox", "signature", "text", "text", "text"])) {
     fail(`export field types ${types}`);
   }
 
