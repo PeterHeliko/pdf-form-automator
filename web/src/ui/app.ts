@@ -125,6 +125,8 @@ export class App {
     title("btn-delete", t("deleteTitle"));
     set("btn-undo", t("undo"));
     set("btn-redo", t("redo"));
+    title("btn-undo", t("undoTitle"));
+    title("btn-redo", t("redoTitle"));
     set("drop-hint", t("dropHint"));
     document.documentElement.lang = currentLang();
     // field-type display names in both type selects
