@@ -23,6 +23,4 @@ npm run smoke      # headless-browser end-to-end test
 
 ## License
 
-Built on MuPDF.js, which is AGPL-3.0: hosting this app publicly counts as
-network distribution, so the page must offer its source — the app links to
-this repository from its footer for that reason.
+Built on MuPDF.js
