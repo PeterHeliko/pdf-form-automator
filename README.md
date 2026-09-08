@@ -1,7 +1,9 @@
 # pdf-form-automator
 
+visit: https://peterheliko.github.io/pdf-form-automator/
+
 Turns flat (non-interactive) PDF forms into fillable PDFs, entirely in the
-browser: open a PDF, likely fill-in areas are detected automatically,
+browser. Open a PDF, likely fill-in areas are detected automatically,
 review/edit them on the page, then export a copy with real AcroForm fields —
 text, checkbox, date, and digital signature fields (`/Sig`).
 
