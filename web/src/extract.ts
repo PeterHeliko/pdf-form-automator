@@ -46,16 +46,43 @@ interface SpanPart {
   originY: number;
 }
 
+/** A checkbox typed as a character ("☐ Ja", "Playalong ⃝"). */
+interface BoxGlyph {
+  quad: Rect;
+  originY: number;
+  size: number;
+}
+
+// empty ballot boxes and circles, incl. the combining enclosing circle/square
+const BOX_GLYPHS = new Set([..."☐□▢◻◽⬜❏❐❑❒○◯❍⚪⃝⃞"]);
+// the same shapes in symbol fonts, which come through as PUA (U+F0xx) or
+// raw single-byte codes depending on the PDF's ToUnicode map
+const SYMBOL_FONT_BOXES: [RegExp, number[]][] = [
+  [/wingdings\W?2/i, [0x2a]],
+  [/wingdings(?!\W?[23])/i, [0x6f, 0x71, 0x72, 0xa8]],
+  [/dingbats/i, [0x6d, 0x6f, 0x70, 0x71, 0x72]], // ZapfDingbats ❍❏❐❑❒
+];
+
+function isBoxGlyph(c: string, fontName: string): boolean {
+  if (BOX_GLYPHS.has(c)) return true;
+  const cp = c.codePointAt(0)!;
+  if (cp >= 0x100 && (cp < 0xf000 || cp > 0xf0ff)) return false;
+  return SYMBOL_FONT_BOXES.some(([font, codes]) => font.test(fontName) && codes.includes(cp & 0xff));
+}
+
 function quadBounds(q: number[]): Rect {
   const xs = [q[0], q[2], q[4], q[6]];
   const ys = [q[1], q[3], q[5], q[7]];
   return new Rect(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
 }
 
-function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: PageChar[]; images: Rect[] } {
+function walkText(list: mupdf.DisplayList): {
+  rawLines: RawSpan[][]; pageChars: PageChar[]; images: Rect[]; glyphs: BoxGlyph[];
+} {
   const rawLines: RawSpan[][] = [];
   const pageChars: PageChar[] = [];
   const images: Rect[] = [];
+  const glyphs: BoxGlyph[] = [];
   let curLine: RawSpan[] | null = null;
   let curSpan: RawSpan | null = null;
 
@@ -89,10 +116,17 @@ function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: 
       onChar(c, origin, font, size, quad, color) {
         if (curLine === null) return;
         const bbox = quadBounds(quad);
-        pageChars.push({ text: c, x0: bbox.x0, x1: bbox.x1, top: bbox.y0, bottom: bbox.y1 });
         // group like PyMuPDF's span builder: font name without the subset
         // prefix, bold/italic flags, size, and the sRGB-quantized color
         const name = font.getName().replace(/^[A-Z]{6}\+/, "");
+        if (isBoxGlyph(c, name)) {
+          // not text: becomes a box, and splits the span so the text on
+          // either side stays two separate labels
+          glyphs.push({ quad: bbox, originY: origin[1], size });
+          curSpan = null;
+          return;
+        }
+        pageChars.push({ text: c, x0: bbox.x0, x1: bbox.x1, top: bbox.y0, bottom: bbox.y1 });
         const rgb = color.map((v) => Math.round(v * 255)).join(",");
         let key = `${name}|${font.isBold() ? 1 : 0}${font.isItalic() ? 1 : 0}|${size}|${rgb}`;
         // a space much wider than the font's space glyph was synthesized by
@@ -119,7 +153,56 @@ function walkText(list: mupdf.DisplayList): { rawLines: RawSpan[][]; pageChars: 
   } finally {
     st.destroy();
   }
-  return { rawLines, pageChars, images };
+  return { rawLines, pageChars, images, glyphs };
+}
+
+/** Visible extent of a box glyph. The char quad is the font's full
+ * advance x ascent..descent cell, much taller than the drawn square, so
+ * render that cell and take the ink bounds. */
+function glyphInk(list: mupdf.DisplayList, g: BoxGlyph): Rect | null {
+  const q = g.quad;
+  if (q.width < 0.3 * g.size) {
+    // zero-advance combining glyph: no cell to render, assume a typical
+    // box of 0.8em sitting on the baseline
+    const s = 0.8 * g.size;
+    const cx = (q.x0 + q.x1) / 2;
+    const cy = g.originY - 0.35 * g.size;
+    return new Rect(cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2);
+  }
+  const S = 4; // device pixels per point
+  const ix0 = Math.floor(q.x0 * S);
+  const iy0 = Math.floor(q.y0 * S);
+  const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceGray,
+    [ix0, iy0, Math.ceil(q.x1 * S), Math.ceil(q.y1 * S)], false);
+  try {
+    pix.clear(255);
+    const dev = new mupdf.DrawDevice(mupdf.Matrix.scale(S, S), pix);
+    try {
+      list.run(dev, mupdf.Matrix.identity);
+      dev.close();
+    } finally {
+      dev.destroy();
+    }
+    const w = pix.getWidth();
+    const h = pix.getHeight();
+    const stride = pix.getStride();
+    const px = pix.getPixels();
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (px[y * stride + x] < 160) {
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
+      }
+    }
+    if (x1 < 0) return null; // invisible (white or clipped away)
+    return new Rect((ix0 + x0) / S, (iy0 + y0) / S, (ix0 + x1 + 1) / S, (iy0 + y1 + 1) / S);
+  } finally {
+    pix.destroy();
+  }
 }
 
 /** Port of _tight_bbox: clamp the vertical extent around the baseline. */
@@ -483,9 +566,12 @@ export function extractPage(page: mupdf.PDFPage, pageNumber: number): PageData {
   let rawLines: RawSpan[][];
   let pageChars: PageChar[];
   let images: Rect[];
+  let glyphBoxes: Rect[];
   try {
     drawings = collectDrawings(list);
-    ({ rawLines, pageChars, images } = walkText(list));
+    let glyphs: BoxGlyph[];
+    ({ rawLines, pageChars, images, glyphs } = walkText(list));
+    glyphBoxes = glyphs.map((g) => glyphInk(list, g)).filter((r): r is Rect => r !== null);
   } finally {
     list.destroy();
   }
@@ -504,10 +590,11 @@ export function extractPage(page: mupdf.PDFPage, pageNumber: number): PageData {
     tables: findTables(drawings, pageChars, width, height),
   };
   data.boxes = findBoxes(hsegs, vsegs);
-  // small near-square images are checkboxes in disguise (Word inserts empty
-  // checkbox squares as inline images); expose them as boxes so the checkbox
-  // detector and the add-field snap treat them like drawn squares
-  for (const r of images) {
+  // small near-square images and box glyphs are checkboxes in disguise (Word
+  // inserts empty checkbox squares as inline images or symbol characters);
+  // expose them as boxes so the checkbox detector and the add-field snap
+  // treat them like drawn squares
+  for (const r of images.concat(glyphBoxes)) {
     if (r.width >= 5 && r.width <= 22 && r.height >= 5 && r.height <= 22 &&
         Math.abs(r.width - r.height) <= 4) {
       data.boxes.push({ rect: r });

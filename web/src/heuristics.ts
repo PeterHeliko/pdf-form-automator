@@ -17,6 +17,7 @@ export const FIELD_GAP = 1.5;
 const MIN_INLINE_GAP = 40.0; // min width for a field right of a label on the same line
 const MIN_UNDERLINE_GAP = 30.0;
 const MIN_VGAP = 12.0; // min height of an empty area below a label inside a box
+const LABEL_ABOVE_MAX = 45.0; // max distance from a fill-in line up to its label line
 const FIELD_HEIGHT = 16.0; // default height for underline fields
 const CHECKBOX_MIN = 6.0;
 const CHECKBOX_MAX = 18.0;
@@ -46,11 +47,43 @@ function labelSpans(line: TextLine): Span[] {
   return line.spans.filter((s) => s.text.trimEnd().endsWith(":"));
 }
 
+const RUN_GAP = 8.0; // spans closer than this belong to one text run
+
+/** Index of the first span of the contiguous run ending at spans[endIndex]. */
+function runStart(spans: Span[], endIndex: number): number {
+  let start = endIndex;
+  while (start > 0 && spans[start].bbox.x0 - spans[start - 1].bbox.x1 < RUN_GAP) start--;
+  return start;
+}
+
 /** Text of the contiguous span run ending at spans[endIndex]. */
 function runLabel(spans: Span[], endIndex: number): string {
-  let start = endIndex;
-  while (start > 0 && spans[start].bbox.x0 - spans[start - 1].bbox.x1 < 8) start--;
-  return spans.slice(start, endIndex + 1).map((s) => s.text).join(" ").trim();
+  return spans.slice(runStart(spans, endIndex), endIndex + 1).map((s) => s.text).join(" ").trim();
+}
+
+/** Text of the contiguous span run starting at spans[startIndex]. */
+function runLabelForward(spans: Span[], startIndex: number): string {
+  let end = startIndex;
+  while (end + 1 < spans.length && spans[end + 1].bbox.x0 - spans[end].bbox.x1 < RUN_GAP) end++;
+  return spans.slice(startIndex, end + 1).map((s) => s.text).join(" ").trim();
+}
+
+function sortedSpans(line: TextLine): Span[] {
+  return line.spans.slice().sort((a, b) => a.bbox.x0 - b.bbox.x0);
+}
+
+/** The line is nothing but one ':'-terminated label run. */
+function isLabelOnly(line: TextLine): boolean {
+  const spans = sortedSpans(line);
+  const last = spans.length - 1;
+  return spans[last].text.trimEnd().endsWith(":") && runStart(spans, last) === 0;
+}
+
+/** The line opens with a ':'-label ("Vorname:   Nachname:"). */
+function startsWithLabel(line: TextLine): boolean {
+  const spans = sortedSpans(line);
+  const i = spans.findIndex((s) => s.text.trimEnd().endsWith(":"));
+  return i >= 0 && runStart(spans, i) === 0;
 }
 
 /** Fields in the horizontal gaps after each ':'-label on a text line. */
@@ -179,6 +212,30 @@ function tableCandidates(data: PageData): Candidate[] {
   return out;
 }
 
+/** Label for a checkbox: the text run nearest to it on its row, the right
+ * side winning a tie ("☐ Ja ☐ Nein" as well as "Playalong ☐"). */
+function checkboxLabel(data: PageData, r: Rect): string {
+  let label = "";
+  let best = 1e9;
+  for (const line of data.lines) {
+    const spans = sortedSpans(line);
+    for (let i = 0; i < spans.length; i++) {
+      const s = spans[i].bbox;
+      // same row: not just grazing the box (a wrapped label's next line)
+      const yOverlap = Math.min(s.y1, r.y1) - Math.max(s.y0, r.y0);
+      if (yOverlap <= 0.5 * Math.min(s.height, r.height)) continue;
+      if (s.x0 >= r.x1 - 2 && s.x0 - r.x1 <= best) {
+        best = s.x0 - r.x1;
+        label = runLabelForward(spans, i);
+      } else if (s.x1 <= r.x0 + 2 && r.x0 - s.x1 < best) {
+        best = r.x0 - s.x1;
+        label = runLabel(spans, i);
+      }
+    }
+  }
+  return words(label).slice(0, 5).join(" ");
+}
+
 function checkboxCandidates(data: PageData): Candidate[] {
   const out: Candidate[] = [];
   for (const box of data.boxes) {
@@ -186,20 +243,10 @@ function checkboxCandidates(data: PageData): Candidate[] {
     if (!(CHECKBOX_MIN <= r.width && r.width <= CHECKBOX_MAX &&
           CHECKBOX_MIN <= r.height && r.height <= CHECKBOX_MAX &&
           Math.abs(r.width - r.height) <= 4)) continue;
-    if (data.lines.some((line) => line.bbox.intersects(r))) continue;
-    let label = "";
-    let best = 1e9;
-    for (const line of data.lines) {
-      if (line.bbox.y0 < r.y1 && line.bbox.y1 > r.y0 && line.bbox.x0 >= r.x1 - 2) {
-        const d = line.bbox.x0 - r.x1;
-        if (d < best) {
-          best = d;
-          label = lineText(line);
-        }
-      }
-    }
+    // span-level: a text line may run past the box ("☐ Ja ☐ Nein")
+    if (data.lines.some((line) => line.spans.some((s) => s.bbox.intersects(r)))) continue;
     out.push(makeCandidate(data.number, r.clone(), "checkbox",
-      words(label).slice(0, 5).join(" "), { source: "checkbox" }));
+      checkboxLabel(data, r), { source: "checkbox" }));
   }
   return out;
 }
@@ -286,6 +333,52 @@ function segInBoxes(seg: HSeg, boxes: Box[], tables: Rect[]): boolean {
   );
 }
 
+/** Label for a fill-in line from the text line above it: of the ':'-labels
+ * that end a column there, the one nearest the stretch [x0, x1], so
+ * "A:      B:" above two lines labels each line separately. Lacking one,
+ * the whole line if anyText (an underscore run below a heading), else "". */
+function labelAbove(line: TextLine, x0: number, x1: number, anyText: boolean): string {
+  const spans = sortedSpans(line);
+  let label = "";
+  let best = -Infinity;
+  for (let i = 0; i < spans.length; i++) {
+    if (!spans[i].text.trimEnd().endsWith(":")) continue;
+    // "Hinweis: bitte ..." is prose, not a label over a line
+    if (i + 1 < spans.length && spans[i + 1].bbox.x0 - spans[i].bbox.x1 < RUN_GAP) continue;
+    const start = runStart(spans, i);
+    // horizontal overlap with the stretch; negative = distance
+    const overlap = Math.min(spans[i].bbox.x1, x1) - Math.max(spans[start].bbox.x0, x0);
+    if (overlap > best) {
+      best = overlap;
+      label = runLabel(spans, i);
+    }
+  }
+  return label || (anyText ? lineText(line).trim() : "");
+}
+
+/** Nearest section heading above y: a bold line not ending in ':'. */
+function sectionHeading(data: PageData, y: number): string {
+  let heading = "";
+  for (const l of data.lines) {
+    if (l.bbox.y1 > y) continue;
+    const text = lineText(l).trim();
+    if (l.spans.every((s) => s.bold) && !text.endsWith(":")) heading = text;
+  }
+  return heading;
+}
+
+/** Lines under an "Unterschriften" heading are signature lines even when
+ * their labels only name the signer ("Erziehungsberechtigte:"), unless the
+ * label asks for a name or place. */
+function classifyLine(data: PageData, label: string, rect: Rect): FType {
+  const ftype = classify(label);
+  if (ftype === "text" && !/name|\bort\b/i.test(label) &&
+      SIGNATURE_RE.test(sectionHeading(data, rect.y0))) {
+    return "signature";
+  }
+  return ftype;
+}
+
 /** Fill-in lines: horizontal segments that are not box/table edges. */
 function underlineCandidates(data: PageData): Candidate[] {
   const out: Candidate[] = [];
@@ -346,11 +439,13 @@ function underlineCandidates(data: PageData): Candidate[] {
         (lab.length > 0 && lab.length <= 40 && words(lab).length <= 5);
       if (!ok) {
         // fall back to the text line just above, colon required there
+        // (except for underscore runs, which are fill-in lines regardless)
         const above = data.lines.filter((l) =>
-          seg.y - l.bbox.y1 > 0 && seg.y - l.bbox.y1 < 35 && l.bbox.x1 > x0 && l.bbox.x0 < x1,
+          seg.y - l.bbox.y1 > 0 && seg.y - l.bbox.y1 < LABEL_ABOVE_MAX &&
+          l.bbox.x1 > x0 && l.bbox.x0 < x1,
         );
-        lab = above.length ? lineText(above[above.length - 1]) : "";
-        ok = lab.trimEnd().endsWith(":");
+        lab = above.length ? labelAbove(above[above.length - 1], x0, x1, seg.fromText) : "";
+        ok = lab !== "";
       }
       if (!ok) {
         // unlabeled continuation line: inherit from the accepted field above
@@ -365,9 +460,9 @@ function underlineCandidates(data: PageData): Candidate[] {
           }
         }
       }
-      if (!ok) continue;
+      if (!ok && !seg.fromText) continue;
       const rect = new Rect(x0, seg.y - FIELD_HEIGHT, x1, seg.y + 1);
-      out.push(makeCandidate(data.number, rect, classify(lab), lab, { source: "underline" }));
+      out.push(makeCandidate(data.number, rect, classifyLine(data, lab, rect), lab, { source: "underline" }));
     }
   }
   return out;
@@ -450,8 +545,9 @@ function separateTouching(kept: Candidate[]): void {
   }
 }
 
-/** Free-standing 'Label:' lines with empty space to the right. */
-function bareLabelCandidates(data: PageData): Candidate[] {
+/** Free-standing 'Label:' lines with empty space to the right. `underlines`
+ * are the fill-in line fields; one that took a label owns it. */
+function bareLabelCandidates(data: PageData, underlines: Candidate[]): Candidate[] {
   const out: Candidate[] = [];
   if (!data.hsegs.length && !data.boxes.length && !data.tables.length) {
     // a page without any drawn geometry is a letter, not a form
@@ -464,17 +560,32 @@ function bareLabelCandidates(data: PageData): Candidate[] {
     ...data.lines.map((l) => l.bbox.x1),
     0.0,
   );
-  for (const line of data.lines) {
-    // two or more labels sharing the line is the letter-closing pattern
-    if (labelSpans(line).length < 2) continue;
+  const lines = data.lines;
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    // two or more labels sharing the line is the letter-closing pattern; a
+    // lone label counts only as one row of a stack of label rows ("Adresse:"
+    // below "Vorname: Nachname:"), not as a heading or prose ending in ':'
+    const nLabels = labelSpans(line).length;
+    if (nLabels === 0) continue;
+    if (nLabels === 1) {
+      const inStack = isLabelOnly(line) && [lines[li - 1], lines[li + 1]].some((m) =>
+        m && Math.abs(m.bbox.y0 - line.bbox.y0) <= 40 && startsWithLabel(m));
+      if (!inStack) continue;
+    }
     if (avoid.some((a) => line.bbox.intersects(a))) continue;
     for (const cand of lineGapFields(line, rightEdge, data.number)) {
       // only short, label-like runs
       if (cand.label.length > 40 || words(cand.label).length > 5) continue;
-      // a fill-in line at or just below the gap owns this label
+      // a fill-in line at or just below the gap owns this label, as does a
+      // line field further down that took it ("Unterschrift:" over a line)
       const owned = data.hsegs.some((seg) =>
         seg.x1 > cand.rect.x0 && seg.x0 < cand.rect.x1 &&
         line.bbox.y0 - 2 <= seg.y && seg.y <= line.bbox.y1 + 25,
+      ) || underlines.some((u) =>
+        u.label === cand.label &&
+        u.rect.y1 > line.bbox.y0 && u.rect.y1 <= line.bbox.y1 + LABEL_ABOVE_MAX + 1 &&
+        u.rect.x1 > line.bbox.x0 && u.rect.x0 < line.bbox.x1,
       );
       if (owned) continue;
       if (avoid.some((a) => cand.rect.intersects(a))) continue;
@@ -486,12 +597,13 @@ function bareLabelCandidates(data: PageData): Candidate[] {
 }
 
 export function detect(data: PageData): Candidate[] {
+  const underlines = underlineCandidates(data);
   return dedupe([
     ...checkboxCandidates(data),
     ...tableCandidates(data),
     ...boxCandidates(data),
-    ...underlineCandidates(data),
-    ...bareLabelCandidates(data),
+    ...underlines,
+    ...bareLabelCandidates(data, underlines),
   ]);
 }
 
@@ -533,19 +645,8 @@ export function detectInRegion(data: PageData, regionIn: Rect): Candidate[] {
     if (!region.intersects(r)) continue;
     if (5.0 <= r.width && r.width <= 22.0 && 5.0 <= r.height && r.height <= 22.0 &&
         Math.abs(r.width - r.height) <= 5) {
-      let label = "";
-      let best = 1e9;
-      for (const line of data.lines) {
-        if (line.bbox.y0 < r.y1 && line.bbox.y1 > r.y0 && line.bbox.x0 >= r.x1 - 2) {
-          const d = line.bbox.x0 - r.x1;
-          if (d < best) {
-            best = d;
-            label = lineText(line);
-          }
-        }
-      }
       out.push(makeCandidate(data.number, r.clone(), "checkbox",
-        words(label).slice(0, 5).join(" "), { source: "nudge" }));
+        checkboxLabel(data, r), { source: "nudge" }));
     }
   }
   if (out.length) return dedupe(out);
